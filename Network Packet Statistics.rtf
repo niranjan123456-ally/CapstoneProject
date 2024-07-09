@@ -1,0 +1,551 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2761
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;}
+{\colortbl;\red255\green255\blue255;\red27\green27\blue27;\red255\green255\blue255;}
+{\*\expandedcolortbl;;\cssrgb\c14118\c14118\c14118;\cssrgb\c100000\c100000\c100000;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww28600\viewh18000\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs30 \cf2 \cb3 \expnd0\expndtw0\kerning0
+Project 2:\
+************\
+overview:\
+************\
+Linux Network Packet Statistics\
+Understand the basics of network packet capture and analysis.\
+Develop a console based application to capture and display network packet statistics.\
+Implement a tabular and text based graphical representation  of packet statistics.\
+Pass Command line parameters to select type of display-tabular ,Graph.\
+\
+\
+#include <netinet/in.h>\cb1 \
+\cb3 #include <errno.h>\cb1 \
+\cb3 #include <netdb.h>\cb1 \
+\cb3 #include <stdio.h> \'a0 // For standard things\cb1 \
+\cb3 #include <stdlib.h> \'a0// malloc\cb1 \
+\cb3 #include <string.h> \'a0// strlen\cb1 \
+\
+\cb3 #include <netinet/ip_icmp.h> \'a0// Provides declarations for icmp header\cb1 \
+\cb3 #include <netinet/udp.h> \'a0 \'a0 \'a0// Provides declarations for udp header\cb1 \
+\cb3 #include <netinet/tcp.h> \'a0 \'a0 \'a0// Provides declarations for tcp header\cb1 \
+\cb3 #include <netinet/ip.h> \'a0 \'a0 \'a0 // Provides declarations for ip header\cb1 \
+\cb3 #include <netinet/if_ether.h> // For ETH_P_ALL\cb1 \
+\cb3 #include <net/ethernet.h> \'a0 \'a0 // For ether_header\cb1 \
+\cb3 #include <sys/socket.h>\cb1 \
+\cb3 #include <arpa/inet.h>\cb1 \
+\cb3 #include <sys/ioctl.h>\cb1 \
+\cb3 #include <sys/time.h>\cb1 \
+\cb3 #include <sys/types.h>\cb1 \
+\cb3 #include <unistd.h>\cb1 \
+\cb3 #include<pthread.h>\cb1 \
+\
+\cb3 #define MAX_LINES 200\cb1 \
+\cb3 #define LINE_LENGTH 256\cb1 \
+\cb3 #define RED "\\x1b[31m"\cb1 \
+\cb3 #define GREEN "\\x1b[32m"\cb1 \
+\cb3 #define YELLOW "\\x1b[33m"\cb1 \
+\cb3 #define BLUE "\\x1b[34m"\cb1 \
+\cb3 #define MAGENTA "\\x1b[35m"\cb1 \
+\cb3 #define CYAN "\\x1b[36m"\cb1 \
+\cb3 #define RESET "\\x1b[0m"\cb1 \
+\
+\cb3 int type=0;\cb1 \
+\cb3 void ProcessPacket(unsigned char *, int, int[]);\cb1 \
+\cb3 void print_ip_header(unsigned char *, int, FILE *);\cb1 \
+\cb3 void print_tcp_packet(unsigned char *, int, FILE *);\cb1 \
+\cb3 void print_udp_packet(unsigned char *, int, FILE *);\cb1 \
+\cb3 void print_icmp_packet(unsigned char *, int, FILE *);\cb1 \
+\cb3 void PrintData(unsigned char *, int);\cb1 \
+\cb3 void* readPacket(void* arg);\cb1 \
+\
+\cb3 typedef struct \{\cb1 \
+\cb3 \'a0 \'a0 char source_ip[16];\cb1 \
+\cb3 \'a0 \'a0 char destination_ip[16];\cb1 \
+\cb3 \'a0 \'a0 int packet_size;\cb1 \
+\cb3 \'a0 \'a0 char protocol_type[8];\cb1 \
+\cb3 \'a0 \'a0 int source_port;\cb1 \
+\cb3 \'a0 \'a0 int destination_port;\cb1 \
+\cb3 \}Packet;\cb1 \
+\
+\
+\cb3 \'a0Packet packets[MAX_LINES];\cb1 \
+\
+\cb3 FILE *udpFile;\cb1 \
+\cb3 FILE *tcpFile;\cb1 \
+\cb3 FILE *icmpFile;\cb1 \
+\cb3 FILE *ipFile;\cb1 \
+\cb3 struct sockaddr_in source, dest,saddr;\cb1 \
+\cb3 int tcpCount = 0, udpCount = 0, icmpCount = 0, igmpCount = 0, othersCount = 0, total = 0, i, j;\cb1 \
+\
+\cb3 void processProtocol(int protocol) \{\cb1 \
+\cb3 \'a0 \'a0 switch(protocol) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 1:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("TCP protocol selected.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 2:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("UDP protocol selected.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 3:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("ICMP protocol selected.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 default:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Invalid protocol selection.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \}\cb1 \
+\cb3 void read_tcp_packets(const char *file_path, Packet packets[], int max_lines) \{\cb1 \
+\cb3 \'a0 \'a0FILE *file;\cb1 \
+\cb3 \'a0 \'a0 char line[LINE_LENGTH];\cb1 \
+\cb3 \'a0 \'a0 int packet_index = 0;\cb1 \
+\cb3 \'a0 \'a0 Packet current_packet;\cb1 \
+\
+\cb3 \'a0 \'a0 file = fopen(file_path, "r");\cb1 \
+\cb3 \'a0 \'a0 if (file == NULL) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 fprintf(stderr, "Could not open file\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 return;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 while (fgets(line, sizeof(line), file) && packet_index < 30) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (strncmp(line, "Source IP:", 10) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Source IP: %15s", current_packet.source_ip);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Destination IP:", 15) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Destination IP: %15s", current_packet.destination_ip);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Packet Size:", 12) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Packet Size: %d", &current_packet.packet_size);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Protocol Type:", 14) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Protocol Type: %7s", current_packet.protocol_type);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Source Port:", 12) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Source Port: %d", &current_packet.source_port);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Destination Port:", 17) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Destination Port: %d", &current_packet.destination_port);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "TCP Packet", 10) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 packets[packet_index++] = current_packet;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 fclose(file);\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void read_udp_packets(const char *file_path, Packet packets[], int max_lines) \{\cb1 \
+\cb3 \'a0 FILE *file;\cb1 \
+\cb3 \'a0 \'a0 char line[LINE_LENGTH];\cb1 \
+\cb3 \'a0 \'a0 int packet_index = 0;\cb1 \
+\cb3 \'a0 \'a0 Packet current_packet;\cb1 \
+\
+\cb3 \'a0 \'a0 file = fopen(file_path, "r");\cb1 \
+\cb3 \'a0 \'a0 if (file == NULL) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 fprintf(stderr, "Could not open file\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 return;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 while (fgets(line, sizeof(line), file) && packet_index < 30) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (strncmp(line, "Source IP:", 10) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Source IP: %15s", current_packet.source_ip);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Destination IP:", 15) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Destination IP: %15s", current_packet.destination_ip);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Packet Size:", 12) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Packet Size: %d", &current_packet.packet_size);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Protocol Type:", 14) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Protocol Type: %7s", current_packet.protocol_type);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Source Port:", 12) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Source Port: %d", &current_packet.source_port);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "Destination Port:", 17) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 sscanf(line, "Destination Port: %d", &current_packet.destination_port);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strncmp(line, "UDP Packet", 10) == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 packets[packet_index++] = current_packet;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 fclose(file);\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void readFile(int fileNumber) \{\cb1 \
+\cb3 \'a0 \'a0 pthread_t read;\cb1 \
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 switch(fileNumber)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 1:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 type=1;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Reading TCP file...\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0// read_tcp_packets("tcp.txt", packets, MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0pthread_create(&read,NULL,readPacket,NULL);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 2:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 type=2;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Reading UDP file...\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0pthread_create(&read,NULL,readPacket,NULL);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 // read_udp_packets("udp.txt", packets,MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 default:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Invalid file number.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void print_packets(Packet packets[], int count)\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 printf("%-15s %-15s %-12s %-15s %-12s %-15s\\n", "Source IP", "Destination IP", "Packet Size", "Protocol Type", "Source Port", "Destination Port");\cb1 \
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 printf("----------------------------------------------------------------------------------------------------\\n");\cb1 \
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 for (int i = 0; i < 28; i++)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("%-15s %-15s %-12d %-15s %-12d %-15d\\n",\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].source_ip,\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].destination_ip,\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].packet_size,\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].protocol_type,\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].source_port,\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0packets[i].destination_port);\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\
+\
+\cb3 \'a0 \'a0\cb1 \
+\
+\
+\cb3 void print_graph(Packet packets[], int count) \{\cb1 \
+\cb3 \'a0 \'a0 printf("Packet Sizes Bar Graph\\n");\cb1 \
+\cb3 \'a0 \'a0 printf("-----------------------\\n");\cb1 \
+\
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 int max_size = 0;\cb1 \
+\cb3 \'a0 \'a0 for (int i = 0; i < 30; i++) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (packets[i].packet_size > max_size) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 max_size = packets[i].packet_size;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 // Print the bar graph\cb1 \
+\cb3 \'a0 \'a0 for (int i = 0; i <30; i++) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 const char* color;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (strcmp(packets[i].protocol_type, "TCP") == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 color = BLUE;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (strcmp(packets[i].protocol_type, "UDP") == 0) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 color = GREEN;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 color = RESET;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("%-15s -> %-15s [%s%-4s%s] | ", packets[i].source_ip, packets[i].destination_ip, color, packets[i].protocol_type, RESET);\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 for (int j = 0; j < packets[i].packet_size * 20 / max_size; j++) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("%s*%s", color, RESET);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf(" %d bytes [%s%d%s -> %s%d%s]\\n", packets[i].packet_size, CYAN, packets[i].source_port, RESET, CYAN, packets[i].destination_port, RESET);\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \}\cb1 \
+\
+\
+\
+\
+\
+\
+\cb3 void printData(int choice) \{\cb1 \
+\cb3 \'a0 \'a0 switch(choice) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 1:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Printing data as Text based histogram...\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0print_graph(packets, MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 case 2:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Printing data as table...\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0print_packets(packets, MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 default:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Invalid choice.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void* readPacket(void* arg)\{\cb1 \
+\cb3 \'a0 \'a0 if(type==1)\{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 read_tcp_packets("tcp.txt", packets, MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 else if(type==2)\{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 read_udp_packets("udp.txt", packets, MAX_LINES);\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \}\cb1 \
+\cb3 int main(int argc, char *argv[])\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 \'a0// pthread_t tid1;\cb1 \
+\
+\cb3 \'a0 \'a0 int protocol;\cb1 \
+\cb3 \'a0 \'a0 int fileNumber;\cb1 \
+\cb3 \'a0 \'a0 int choice;\cb1 \
+\cb3 \'a0 \'a0 int saddr_size, data_size;\cb1 \
+\cb3 \'a0 \'a0 unsigned char *buffer = (unsigned char *)malloc(65536); // It's Big!\cb1 \
+\
+\cb3 \'a0 \'a0 udpFile = fopen("udp.txt", "a");\cb1 \
+\cb3 \'a0 \'a0 tcpFile = fopen("tcp.txt", "a");\cb1 \
+\cb3 \'a0 \'a0 icmpFile = fopen("icmp.txt", "a");\cb1 \
+\cb3 \'a0 \'a0 ipFile = fopen("ip.txt", "a");\cb1 \
+\
+\cb3 \'a0 \'a0 if (udpFile == NULL || tcpFile == NULL || icmpFile == NULL || ipFile == NULL)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("Unable to create log files.");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 return 1;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 printf("Starting...\\n");\cb1 \
+\
+\cb3 \'a0 \'a0 int sock_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));\cb1 \
+\cb3 \'a0 \'a0 if (sock_raw < 0)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 // Print the error with proper message\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 perror("Socket Error");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 return 1;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 int protocols[4] = \{0\}; // Index represents protocol: 0-TCP, 1-UDP, 2-ICMP, 3-IGMP\cb1 \
+\
+\cb3 \'a0 \'a0 if (argc > 1)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 for (int i = 1; i < argc; i++)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 int protocol = atoi(argv[i]);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 if (protocol >= 1 && protocol <= 4)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 protocols[protocol - 1] = 1;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0else\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 int c;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("No command line arguments entered. Entering interactive shell.\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("Select the protocols and choose 4 to read the file :\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("1. TCP\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("2. UDP\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("3. ICMP\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf("4. readFile\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 scanf("%d",&c);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (c == 4) \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 // Ask user which file to read\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Which file do you want to read?\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("1. TCP file\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("2. UDP file\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("3. ICMP file\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Enter file number (1-3): ");\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 scanf("%d", &fileNumber);\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 readFile(fileNumber);\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 // Ask user how to print data\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("How do you want to print the data?\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("1. Histogram\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("2. Table\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Enter choice (1 or 2): ");\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 scanf("%d", &choice);\cb1 \
+\
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printData(choice);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \} else if (c >= 1 && c <= 4)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 protocols[c - 1] = 1;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 char input[256];\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 fgets(input, sizeof(input), stdin);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 char *token = strtok(input, " ");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 while (token != NULL)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 int protocol = atoi(token);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 if (protocol >= 1 && protocol <= 4)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 protocols[protocol - 1] = 1;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 token = strtok(NULL, " ");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\
+\cb3 \'a0 \'a0 printf("Listening for selected protocols...\\n");\cb1 \
+\
+\cb3 \'a0 \'a0 while (1)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 saddr_size = sizeof saddr;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 // Receive a packet\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 data_size = recvfrom(sock_raw, buffer, 65536, 0, &saddr, (socklen_t *)&saddr_size);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (data_size < 0)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("Recvfrom error, failed to get packets\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 return 1;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 // Now process the packet based on selected protocols\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 ProcessPacket(buffer, data_size, protocols);\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 close(sock_raw);\cb1 \
+\cb3 \'a0 \'a0 fclose(tcpFile);\cb1 \
+\cb3 \'a0 \'a0 fclose(udpFile);\cb1 \
+\cb3 \'a0 \'a0 fclose(icmpFile);\cb1 \
+\cb3 \'a0 \'a0 fclose(ipFile);\cb1 \
+\cb3 \'a0 \'a0 printf("Finished\\n");\cb1 \
+\cb3 \'a0 \'a0 return 0;\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void ProcessPacket(unsigned char *buffer, int size, int protocols[])\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 \'a0 // Get the IP Header part of this packet, excluding the ethernet header\cb1 \
+\cb3 \'a0 \'a0 struct iphdr *iph = (struct iphdr *)(buffer + sizeof(struct ethhdr));\cb1 \
+\cb3 \'a0 \'a0 ++total;\cb1 \
+\cb3 \'a0 \'a0 print_ip_header(buffer, size, ipFile);\cb1 \
+\
+\cb3 \'a0 \'a0 switch (iph->protocol) // Check the Protocol and do accordingly...\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 case 1: // ICMP Protocol\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (protocols[2])\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 ++icmpCount;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 print_icmp_packet(buffer, size, icmpFile);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0\cb1 \
+\cb3 \'a0 \'a0 case 6: // TCP Protocol\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (protocols[0])\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 ++tcpCount;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 print_tcp_packet(buffer, size, tcpFile);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 case 17: // UDP Protocol\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (protocols[1])\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 ++udpCount;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 print_udp_packet(buffer, size, udpFile);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 default:\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 ++othersCount;\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 break;\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 printf("TCP : %d \'a0 UDP : %d \'a0 \'a0 \'a0Others : %d \'a0 Total : %d\\r", tcpCount, udpCount, othersCount, total);\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void print_ip_header(unsigned char *Buffer, int Size, FILE *ipLogFile)\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 struct iphdr *iph = (struct iphdr *)(Buffer + sizeof(struct ethhdr));\cb1 \
+\
+\cb3 \'a0 \'a0 fprintf(ipLogFile, "IP Header\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-IP Version \'a0 \'a0 \'a0 \'a0: %d\\n", (unsigned int)iph->version);\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-IP Header Length \'a0: %d DWORDS or %d Bytes\\n", (unsigned int)iph->ihl, ((unsigned int)(iph->ihl)) * 4);\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Type Of Service \'a0 : %d\\n", (unsigned int)iph->tos);\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-IP Total Length \'a0 : %d \'a0Bytes(Size of Packet)\\n", ntohs(iph->tot_len));\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Identification \'a0 \'a0: %d\\n", ntohs(iph->id));\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-TTL \'a0 \'a0 \'a0: %d\\n", (unsigned int)iph->ttl);\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Protocol : %d\\n", (unsigned int)iph->protocol);\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Checksum : %d\\n", ntohs(iph->check));\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Source IP \'a0 \'a0 \'a0 \'a0: %s\\n", inet_ntoa(source.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(ipLogFile, " \'a0 |-Destination IP \'a0 : %s\\n", inet_ntoa(dest.sin_addr));\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void print_tcp_packet(unsigned char *Buffer, int Size, FILE *tcpLogFile) \{\cb1 \
+\cb3 \'a0 \'a0 struct iphdr *iph = (struct iphdr *)(Buffer + sizeof(struct ethhdr));\cb1 \
+\cb3 \'a0 \'a0 struct tcphdr *tcph = (struct tcphdr *)(Buffer + iph->ihl * 4 + sizeof(struct ethhdr));\cb1 \
+\
+\cb3 \'a0 \'a0 memset(&source, 0, sizeof(source));\cb1 \
+\cb3 \'a0 \'a0 source.sin_addr.s_addr = iph->saddr;\cb1 \
+\
+\cb3 \'a0 \'a0 memset(&dest, 0, sizeof(dest));\cb1 \
+\cb3 \'a0 \'a0 dest.sin_addr.s_addr = iph->daddr;\cb1 \
+\
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "TCP Packet\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Source IP: %s\\n", inet_ntoa(source.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Destination IP: %s\\n", inet_ntoa(dest.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Packet Size: %d bytes\\n", Size);\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Protocol Type: TCP\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Source Port: %u\\n", ntohs(tcph->source));\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "Destination Port: %u\\n", ntohs(tcph->dest));\cb1 \
+\cb3 \'a0 \'a0 fprintf(tcpLogFile, "\\n");\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void print_udp_packet(unsigned char *Buffer, int Size, FILE *udpLogFile) \{\cb1 \
+\cb3 \'a0 \'a0 struct iphdr *iph = (struct iphdr *)(Buffer + sizeof(struct ethhdr));\cb1 \
+\cb3 \'a0 \'a0 struct udphdr *udph = (struct udphdr *)(Buffer + iph->ihl * 4 + sizeof(struct ethhdr));\cb1 \
+\
+\cb3 \'a0 \'a0 memset(&source, 0, sizeof(source));\cb1 \
+\cb3 \'a0 \'a0 source.sin_addr.s_addr = iph->saddr;\cb1 \
+\
+\cb3 \'a0 \'a0 memset(&dest, 0, sizeof(dest));\cb1 \
+\cb3 \'a0 \'a0 dest.sin_addr.s_addr = iph->daddr;\cb1 \
+\
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "UDP Packet\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Source IP: %s\\n", inet_ntoa(source.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Destination IP: %s\\n", inet_ntoa(dest.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Packet Size: %d bytes\\n", Size);\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Protocol Type: UDP\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Source Port: %u\\n", ntohs(udph->source));\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "Destination Port: %u\\n", ntohs(udph->dest));\cb1 \
+\cb3 \'a0 \'a0 fprintf(udpLogFile, "\\n");\cb1 \
+\cb3 \}\cb1 \
+\
+\
+\cb3 void print_icmp_packet(unsigned char *Buffer, int Size, FILE *icmpLogFile)\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 \'a0 struct iphdr *iph = (struct iphdr *)(Buffer + sizeof(struct ethhdr));\cb1 \
+\cb3 \'a0 \'a0 struct icmphdr *icmph = (struct icmphdr *)(Buffer + iph->ihl * 4 + sizeof(struct ethhdr));\cb1 \
+\
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "ICMP Packet\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Source IP: %s\\n", inet_ntoa(source.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Destination IP: %s\\n", inet_ntoa(dest.sin_addr));\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Packet Size: %d bytes\\n", Size);\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Protocol Type: ICMP\\n");\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Type: %d\\n", (unsigned int)(icmph->type));\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Code: %d\\n", (unsigned int)(icmph->code));\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "Checksum: %d\\n", ntohs(icmph->checksum));\cb1 \
+\cb3 \'a0 \'a0 fprintf(icmpLogFile, "\\n");\cb1 \
+\cb3 \}\cb1 \
+\
+\cb3 void PrintData(unsigned char *data, int Size)\cb1 \
+\cb3 \{\cb1 \
+\cb3 \'a0 \'a0 int i, j;\cb1 \
+\cb3 \'a0 \'a0 for (i = 0; i < Size; i++)\cb1 \
+\cb3 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (i != 0 && i % 16 == 0) //if one line of hex printing is complete...\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf(" \'a0 \'a0 \'a0 \'a0 ");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 for (j = i - 16; j < i; j++)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 if (data[j] >= 32 && data[j] <= 128)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("%c", (unsigned char)data[j]); //if it's a number or alphabet\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 else\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("."); //otherwise print a dot\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (i % 16 == 0)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf(" \'a0 ");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 printf(" %02X", (unsigned int)data[i]);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 if (i == Size - 1) //print the last spaces\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 for (j = 0; j < 15 - i % 16; j++)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf(" \'a0 "); //extra spaces\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf(" \'a0 \'a0 \'a0 \'a0 ");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 for (j = i - i % 16; j <= i; j++)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 if (data[j] >= 32 && data[j] <= 128)\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("%c", (unsigned char)data[j]);\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 else\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \{\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf(".");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \'a0 \'a0 printf("\\n");\cb1 \
+\cb3 \'a0 \'a0 \'a0 \'a0 \}\cb1 \
+\cb3 \'a0 \'a0 \}\cb1 \
+\cb3 \}}
