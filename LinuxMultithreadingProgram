@@ -1,0 +1,247 @@
+Project:
+Overview:
+A server and client connection using socket communication , server has shared memory it contains random data, and multiple clients can read the shared memory random data using socket communication.
+Server:
+*******
+#include<stdio.h>
+#include<stdlib.h>
+#include<pthread.h>
+#include<unistd.h>
+#include<string.h>
+#include<fcntl.h>
+#include<sys/mman.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h<>
+#include<semaphore.h>
+
+#define PORT 9091
+#define MAX_CLIENTS 5
+#define SHM_SIZE sizeof(int)
+
+
+sem_t *semaphore;
+int server_fd;
+int client_count=0;
+
+//function to generate random numbers and stored them in shared memory.
+
+void *generate_random_numbers(void arg*){
+    int shm_fd=shm_open(SHM_NAME,O_CREATE | O_RDWR,0666);
+    if(Shm_fd==-1){
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+    ftruncate(shm_fd,SHM_SIZE);
+    int *shared_memory=mmap(0,SHM_SIZE,PROT_WRITE,MAP_SHARED,shm_fd,0);
+    if(shared_memory==MAP_FAILED){
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+    printf("shared_memeory ID:%d\n",shm_fd);
+    while(1){
+        int random_number=rand()%90+10;
+        sem_wait(semaphore);
+        *shared_memeory=random_number;
+        sem_post(semaphore);
+        sleep(1);
+        
+    }
+    return NULL;
+}
+
+//function to handle multiple clients
+void *handle_clients(void *arg){
+    struct sockaddr_in address;
+    int addrlen=sizeof(address);
+    int clients[MAX_CLIENTS];
+    int num_clients=0;
+    //continuolsy accept and handle clients
+    while(1){
+        if(num_clients< MAX_CLIENTS){
+            //Accept new client connections
+            
+            int new_socket=accept(server_fd,(struct sockaddr *)&address,(socklen_t*)&addrlen);
+            if(new_socket <0){
+                perror("accept");
+                exit(EXIT_FAILURE);
+            }
+            //STORE CLIENT SOCKET IN ARRAY;
+            clients[num_clients];
+            client_count++;
+            printf("\n Adding client on %d/n",new_socket);
+            //if maximum client reached create a new thread to handle client
+            pthread_t tid_client;
+            pthread_create(&tid_client,NULL,handleclients,NULL);
+            numclients=0;
+            printf("\n Creating new thread group\n");
+            
+            for(int i=0;i<numclients;i++){
+                sleep(1);
+            }
+            
+        }
+        return NULL;
+    }
+}
+
+int main(){
+    struct sockaddr_in address;
+    int opt=1;
+    //create a scoket file descriptor
+    if((server_fd=socket(AF_INET,SOCK_STREAM,0))==0){
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    //Attach the socket to the PORT
+    if(setsockopt(server_fd,SOL_SOCKET,SO_REUSEADDR | SO_REUSEPORT,&opt,sizeof(opt))){
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+    
+    address.sin_family=AF_INET;
+    addess.sin_addr.s_addr=INADDR_ANY;
+    address.sin_port=htons(PORT);
+    //Bind the socket
+    if(bind(server_fd,(struct sockaddr *)&address,sizeof(address))<0){
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    //listen for incoming connections
+    if(listen(server_fd,3)<0){
+        perror("listen");
+        exit(EXIT_FAILURE);
+    }
+    
+    printf("\n server is listening to port:%d\n",PORT);
+    
+    //INITIALIZE SEMAPHORE FOR SYNCHRONIZATION MECHANISMS
+    semaphore=sem_open("/semaphore",O_CREATE,0664,1);
+    if(semaphore==SEM_FAILED){
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+    
+    //create threads for generating random threads and accepting clients;
+    pthread_t tid_random,tid_client;
+    pthread_create(&tid_random,NULL,generate_random_numbers,NULL);
+    pthread_create(&tid_client,NULL,handle_clients,NULL);
+    
+    pthread_join(tid_random,NULL);
+    pthread_join(tid_client,NULL);
+    
+    //cleanup 
+    sem_close(semaphore);
+    sem_unlink("/semaphore");
+    shm_unlink(SHM_NAME);
+    return 0;
+}
+
+Explaination:
+In the main function declaring socket addr
+1)create a socket file descriptor for communication between processes over a network.
+2)Attach the socket to the PORT 
+3)Bind the socket using bind function
+4)Listening for incoming connections using listen function
+5)initialize semaphores for synchronization mechanisms.
+6)creating two threads to generate random numbers and to handle clients, by default in program
+Using pthread_create, pthread_join function
+7)close the semaphore
+
+
+Client:
+*******
+
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<fcntl.h>
+#include<sys/mman.h>
+#include<sys/scoket.h>
+#include<arpa.inet.h>
+#include<semaphore.h>
+
+#define PORT 9091
+#define SHM_NAME "/shm_random_numbers"
+#define SHM_SIZE sizeof(int);
+
+int main(){
+    struct sockaddr_in address;
+    int sock=0;
+    struct sockaddr_in serv_addr;
+    
+    //create a socket
+    if((sock=socket(AF_INET,SOCK_STREAM,0))<0){
+        printf("\n socket creation error");
+        return -1;
+    }
+    
+    server_addr.sin_family=AF_INET;
+    serv_addr.sin_port=htons(PORT);
+    
+    //convert IPV4 AND IPV6 ADDRESS FROM TEXT TO BINARY
+    IF(INET_PTON(AF_INET,"127.0.0.1",&serv_addr.sin_addr)<=0){
+        printf("\n invalid address");
+        return -1;
+    }
+    
+    //connect to server
+    if(connect(sock,(struct sockaddr *)&serv_addr,sizeof(Serv_addr))<0){
+        printf("connection failed\n");
+        return -1;
+    }
+    
+    //open shared memeory
+    int shm_fd=shm_open(SHM_NAME,O_RDONLY,0666);
+    if(shm_fd==-1){
+        perror("shm_open");
+        return -1;
+    }
+    
+    //map shared memeory
+    int *Shared_memeory=mmap(0,SHM_SIZE,PROT_READ,MAP_SHARED.shm_fd,0);
+    if(Shared_memeory==MAP_FAILED){
+        perror("mmap");
+        return -1;
+    }
+//open semaphore
+sem_t *Semaphore=sem_open("/semaphore",0);
+if(semaphore==SEM_FAILED){
+    perror("sem_open");
+    return -1;
+}
+
+while(1){
+    sem_waits(semaphore);
+    int random_number=*Shared_memeory;
+    sem_post(semaphore);
+    printf("Recived data: %d/r",random_number);
+    sleep(1);
+}
+
+/cleanup
+sem_close(Semaphore);
+munmap(shared_memory,shm_size);
+close(sock);
+return 0;
+}
+
+Explanation:
+1)creating socket
+2)convert ipv4 and ipv6 address from text to binary
+3)Connect to server
+4)open shared memory
+5)map shared memory
+6)open semaphore
+7)reads the data from shared memory.
+
+Linux commands to check threads are created or not and shared memory also
+Ps -ef | grep server
+Pstree -p process number
+It will display how many threads are created.
+Ipcs -m for shared memory
+Pics -s for semaphores
+
+
